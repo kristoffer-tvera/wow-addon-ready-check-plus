@@ -1,0 +1,8 @@
+## Interface: 120100
+## Title: ReadyCheckPlus
+## Notes: Shows not-ready players after a ready check; gives members a Ready button.
+## Author: Bzl
+## Version: 1.0
+## SavedVariables: ReadyCheckPlusDB
+
+ReadyCheckPlus.lua
