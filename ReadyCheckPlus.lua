@@ -42,6 +42,7 @@ local notReadyList = {} -- ordered array of full player names shown in the list
 
 -- populated during an active ready check; keyed by unit token
 local rcpTracking = {}
+local rcpInitiator = nil -- base name of whoever started the check; they can't respond to their own check
 
 local function SavePosition()
     local point, _, relPoint, x, y = LeaderFrame:GetPoint()
@@ -235,6 +236,7 @@ ev:SetScript("OnEvent", function(self, event, ...)
 
     elseif event == "READY_CHECK" then
         -- snapshot every group member as "waiting" before anyone has responded
+        rcpInitiator = BaseName(... or "")
         rcpTracking = {}
         local function trackUnit(unit)
             if not UnitExists(unit) then
@@ -269,9 +271,9 @@ ev:SetScript("OnEvent", function(self, event, ...)
     elseif event == "READY_CHECK_FINISHED" then
         if UnitIsGroupLeader("player") or UnitIsRaidOfficer("player") then
             notReadyList = {}
-            for unit, data in pairs(rcpTracking) do
-                if unit ~= "player" and (data.status == "notready" or data.status == "waiting") then
-                    local full = (data.realm and data.realm ~= "") and (data.name .. "-" .. data.realm) or data.name
+            for _, data in pairs(rcpTracking) do
+                local full = (data.realm and data.realm ~= "") and (data.name .. "-" .. data.realm) or data.name
+                if BaseName(full) ~= rcpInitiator and (data.status == "notready" or data.status == "waiting") then
                     table.insert(notReadyList, full)
                 end
             end
