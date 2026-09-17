@@ -29,6 +29,16 @@ local function BaseName(fullName)
     return (fullName:match("^([^%-]+)") or fullName):lower()
 end
 
+-- Mythic raid difficulty IDs: 16 = Mythic raid, 8 = Mythic Keystone (dungeon).
+-- Only groups 1-4 (max 20 players) actually participate in a Mythic raid; groups 5-8 are standby.
+local function IsMythicRaid()
+    if not IsInRaid() then
+        return false
+    end
+    local difficultyID = select(3, GetInstanceInfo())
+    return difficultyID == 16
+end
+
 -- ─── Leader Frame ───────────────────────────────────────────────────────────
 
 local MAX_ROWS = 40
@@ -43,6 +53,9 @@ local notReadyList = {} -- ordered array of full player names shown in the list
 -- populated during an active ready check; keyed by unit token
 local rcpTracking = {}
 local rcpInitiator = nil -- base name of whoever started the check; they can't respond to their own check
+
+-- set when a frame wants to be visible but combat is blocking it; re-shown on PLAYER_REGEN_ENABLED
+local pendingMemberPopup = false
 
 local function SavePosition()
     local point, _, relPoint, x, y = LeaderFrame:GetPoint()
@@ -61,6 +74,12 @@ end
 local function RefreshLeaderFrame()
     local count = #notReadyList
     if count == 0 then
+        LeaderFrame:Hide()
+        return
+    end
+
+    -- never pop the frame during combat; PLAYER_REGEN_ENABLED will refresh once combat ends
+    if InCombatLockdown() or UnitAffectingCombat("player") then
         LeaderFrame:Hide()
         return
     end
@@ -217,6 +236,7 @@ ev:RegisterEvent("READY_CHECK")
 ev:RegisterEvent("READY_CHECK_CONFIRM")
 ev:RegisterEvent("READY_CHECK_FINISHED")
 ev:RegisterEvent("PLAYER_REGEN_DISABLED")
+ev:RegisterEvent("PLAYER_REGEN_ENABLED")
 ev:RegisterEvent("CHAT_MSG_RAID")
 ev:RegisterEvent("CHAT_MSG_RAID_LEADER")
 ev:RegisterEvent("CHAT_MSG_INSTANCE_CHAT")
@@ -238,6 +258,7 @@ ev:SetScript("OnEvent", function(self, event, ...)
         -- snapshot every group member as "waiting" before anyone has responded
         rcpInitiator = BaseName(... or "")
         rcpTracking = {}
+        pendingMemberPopup = false
         local function trackUnit(unit)
             if not UnitExists(unit) then
                 return
@@ -252,8 +273,17 @@ ev:SetScript("OnEvent", function(self, event, ...)
             end
         end
         if IsInRaid() then
+            -- in a Mythic raid, ignore anyone parked in subgroups 5-8 (standby / not participating)
+            local mythicRaid = IsMythicRaid()
             for i = 1, 40 do
-                trackUnit("raid" .. i)
+                if mythicRaid then
+                    local subgroup = select(3, GetRaidRosterInfo(i))
+                    if not subgroup or subgroup <= 4 then
+                        trackUnit("raid" .. i)
+                    end
+                else
+                    trackUnit("raid" .. i)
+                end
             end
         elseif IsInGroup() then
             trackUnit("player")
@@ -282,16 +312,35 @@ ev:SetScript("OnEvent", function(self, event, ...)
         else
             local mine = rcpTracking["player"]
             if mine and (mine.status == "notready" or mine.status == "waiting") then
-                MemberPopup:Show()
+                -- never pop the popup during combat; PLAYER_REGEN_ENABLED will show it once combat ends
+                if InCombatLockdown() or UnitAffectingCombat("player") then
+                    pendingMemberPopup = true
+                else
+                    MemberPopup:Show()
+                end
             end
         end
 
     elseif event == "PLAYER_REGEN_DISABLED" then
+        -- entering combat: stash whether the popup was up so we can restore it afterward
+        if MemberPopup and MemberPopup:IsShown() then
+            pendingMemberPopup = true
+        end
         if LeaderFrame then
             LeaderFrame:Hide()
         end
         if MemberPopup then
             MemberPopup:Hide()
+        end
+
+    elseif event == "PLAYER_REGEN_ENABLED" then
+        -- leaving combat: re-show anything that was suppressed while in combat
+        if #notReadyList > 0 then
+            RefreshLeaderFrame()
+        end
+        if pendingMemberPopup then
+            pendingMemberPopup = false
+            MemberPopup:Show()
         end
 
     elseif event:find("^CHAT_MSG_") then
